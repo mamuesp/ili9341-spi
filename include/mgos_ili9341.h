@@ -105,5 +105,6 @@ uint16_t mgos_ili9341_line(int n);
 
 // Images
 void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn);
+void mgos_ili9341_sendPixels(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *data, uint16_t size);
 
 #endif // __MGOS_ILI9341_H

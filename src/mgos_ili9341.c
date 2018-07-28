@@ -560,6 +560,11 @@ exit:
   close(fd);
 }
 
+void mgos_ili9341_sendPixels(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *data, uint16_t size) {
+    LOG(LL_DEBUG, ("mgos_ili9341_sendPixels: x:<%ld> - y:<%ld> - w:<%ld> - h:<%ld> - size: <%ld>", (long) x, (long) y, (long) w, (long) h, (long) size));
+    ili9341_send_pixels(x, y, x + w - 1, y + h - 1, data, size);
+}
+
 bool mgos_ili9341_spi_init(void) {
   // Setup DC pin
   mgos_gpio_write(mgos_sys_config_get_ili9341_dc_pin(), 0);
