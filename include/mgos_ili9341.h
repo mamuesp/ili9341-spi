@@ -19,7 +19,26 @@
 
 #include "mgos.h"
 #include "mgos_ili9341_font.h"
+#include "miniz.h"
 
+uint16_t *mgos_buffer_get_global();
+void mgos_buffer_init(uint16_t **screen_buf);
+
+void mgos_buffer_write_pixel(uint16_t *buffer, uint16_t color, uint16_t x0, uint16_t y0);
+void mgos_buffer_send_pixels(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint8_t *buf, uint32_t buflen);
+void mgos_buffer_fill_rect(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, uint16_t color);
+
+bool mgos_write_dif_header(FILE *fdif, size_t w, size_t h);
+size_t mgos_write_buffer_to_dif(uint16_t *buffer, const char *file);
+size_t mgos_write_buffer_to_png(uint16_t *buffer, const char *pngFileName);
+uint8_t *mgos_buffer_to_brg(uint16_t *buffer, uint16_t w, uint16_t h);
+
+void mgos_buffer_draw_to_screen();
+
+uint16_t mgos_buffer_prepare_clip(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t *out_x, uint16_t *out_y);
+struct mgos_col_rgb mgos_565_to_888(uint16_t pix565);
+
+  
 // Color definitions for RGB in 565-format
 #define ILI9341_BLACK          0x0000   /*   0,   0,   0 */
 #define ILI9341_NAVY           0x000F   /*   0,   0, 128 */
@@ -56,6 +75,12 @@ enum mgos_ili9341_rotation_t {
   ILI9341_LANDSCAPE      = 1,
   ILI9341_PORTRAIT_FLIP  = 2,
   ILI9341_LANDSCAPE_FLIP = 3,
+};
+
+struct mgos_col_rgb {
+  uint8_t r;  
+  uint8_t g;  
+  uint8_t b;  
 };
 
 // Externally callable functions:
@@ -106,5 +131,11 @@ uint16_t mgos_ili9341_line(int n);
 // Images
 void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn);
 void mgos_ili9341_sendPixels(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *data, uint16_t size);
+void mgos_ili9341_set_clip_only(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+
+void mgos_ili9341_spi_write(const uint8_t *data, uint32_t size);
+void mgos_ili9341_spi_write8_cmd(uint8_t byte);
+void mgos_ili9341_spi_write8(const uint8_t byte);
+void mgos_ili9341_spi_write8(uint8_t byte);
 
 #endif // __MGOS_ILI9341_H

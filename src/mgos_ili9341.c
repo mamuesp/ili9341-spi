@@ -26,6 +26,14 @@
 #include "mgos_ili9341_hal.h"
 #include "mgos_ili9341_font.h"
 
+static uint16_t s_screen_width;
+static uint16_t s_screen_height;
+static struct ili9341_window s_window;
+
+static uint16_t *screen_buffer = NULL;
+static uint32_t screen_size = 0;
+static bool useBuffer = true;
+
 #define SPI_MODE    0
 
 struct ili9341_window {
@@ -36,10 +44,6 @@ struct ili9341_window {
   uint16_t fg_color; // in network byte order
   uint16_t bg_color; // in network byte order
 };
-
-static uint16_t s_screen_width;
-static uint16_t s_screen_height;
-static struct ili9341_window s_window;
 
 static const uint8_t ILI9341_init[] = {
   ILI9341_SWRESET,   ILI9341_DELAY, 5,    //  1: Software reset, no args, w/ 5 ms delay afterwards
@@ -73,11 +77,12 @@ static const uint8_t ILI9341_init[] = {
   ILI9341_INVALID_CMD,                                      // End of sequence.
 };
 
-
 // SPI -- Hardware Interface, function names start with ili9341_spi_
 // and are all declared static.
 static void ili9341_spi_write(const uint8_t *data, uint32_t size) {
   struct mgos_spi *spi = mgos_spi_get_global();
+  long maxFreq = 80000000; 
+  long currFreq = mgos_sys_config_get_ili9341_spi_freq();
 
   if (!spi) {
     LOG(LL_ERROR, ("SPI is disabled, set spi.enable=true"));
@@ -87,7 +92,7 @@ static void ili9341_spi_write(const uint8_t *data, uint32_t size) {
   struct mgos_spi_txn txn = {
     .cs   = mgos_sys_config_get_ili9341_cs_index(),
     .mode = SPI_MODE,
-    .freq = mgos_sys_config_get_ili9341_spi_freq(),
+    .freq = currFreq > maxFreq ? maxFreq : currFreq,
   };
   txn.hd.tx_data   = data,
   txn.hd.tx_len    = size,
@@ -156,7 +161,7 @@ static void ili9341_set_clip(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 // buf represents a 16-bit RGB 565 uint16_t color buffer of length buflen bytes (so buflen/2 pixels).
 // Note: data in 'buf' has to be in network byte order!
 static void ili9341_send_pixels(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint8_t *buf, uint32_t buflen) {
-  uint16_t winsize = (x1 - x0 + 1) * (y1 - y0 + 1);
+  uint32_t winsize = (x1 - x0 + 1) * (y1 - y0 + 1);
 
   if (y0 + s_window.y0 > s_window.y1 || x0 + s_window.x0 > s_window.x1) {
     return;
@@ -175,10 +180,15 @@ static void ili9341_send_pixels(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t 
 
   winsize = (x1 - x0 + 1) * (y1 - y0 + 1);
 
+  // now write to display ...
   ili9341_set_clip(x0 + s_window.x0, y0 + s_window.y0, x1 + s_window.x0, y1 + s_window.y0);
   ili9341_spi_write8_cmd(ILI9341_RAMWR);
   mgos_gpio_write(mgos_sys_config_get_ili9341_dc_pin(), 1);
   ili9341_spi_write(buf, winsize * 2);
+
+  if (useBuffer) {
+    mgos_buffer_send_pixels(NULL, x0, y0, x1, y1, buf, buflen);
+  }
 }
 
 #define ILI9341_FILLRECT_CHUNK    256
@@ -217,10 +227,14 @@ static void ili9341_fillRect(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h) {
     }
   }
   free(buf);
+
+  if (useBuffer) {
+    mgos_buffer_fill_rect(NULL, x0, y0, w, h, s_window.fg_color);
+  }
 }
 
 static void ili9341_drawPixel(uint16_t x0, uint16_t y0) {
-//  LOG(LL_DEBUG, ("Pixel [%d,%d] Window [%d,%d]-[%d,%d]", x0, y0, s_window.x0, s_window.y0, s_window.x1, s_window.y1));
+  //  LOG(LL_DEBUG, ("Pixel [%d,%d] Window [%d,%d]-[%d,%d]", x0, y0, s_window.x0, s_window.y0, s_window.x1, s_window.y1));
   if (x0 + s_window.x0 > s_window.x1) {
     return;
   }
@@ -230,6 +244,10 @@ static void ili9341_drawPixel(uint16_t x0, uint16_t y0) {
   ili9341_set_clip(x0 + s_window.x0, y0 + s_window.y0, x0 + s_window.x0 + 1, y0 + s_window.y0 + 1);
   mgos_gpio_write(mgos_sys_config_get_ili9341_dc_pin(), 1);
   ili9341_spi_write((uint8_t *)&s_window.fg_color, 2);
+
+  if (useBuffer) {
+    mgos_buffer_write_pixel(NULL, (uint16_t) s_window.fg_color, x0, y0);
+  }
 }
 
 // External primitives -- these are exported and all functions
@@ -240,6 +258,31 @@ uint16_t mgos_ili9341_color565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
 }
 
+void mgos_ili9341_set_clip_only(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+  ili9341_spi_write8_cmd(ILI9341_CASET); // Column addr set
+  ili9341_spi_write8(x0 >> 8);
+  ili9341_spi_write8(x0 & 0xFF);         // XSTART
+  ili9341_spi_write8(x1 >> 8);
+  ili9341_spi_write8(x1 & 0xFF);         // XEND
+  ili9341_spi_write8_cmd(ILI9341_PASET); // Row addr set
+  ili9341_spi_write8(y0 >> 8);
+  ili9341_spi_write8(y0);                // YSTART
+  ili9341_spi_write8(y1 >> 8);
+  ili9341_spi_write8(y1);                // YEND
+//  ili9341_spi_write8_cmd(ILI9341_RAMRD); // read from RAM
+}
+
+void mgos_ili9341_spi_write(const uint8_t *data, uint32_t size) {
+  ili9341_spi_write(data, size);
+}
+
+void mgos_ili9341_spi_write8(const uint8_t byte) {
+  ili9341_spi_write8(byte);
+}
+
+void mgos_ili9341_spi_write8_cmd(uint8_t byte) {
+  ili9341_spi_write8_cmd(byte);  
+}
 void mgos_ili9341_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   if (x0 > x1) {
     swap(x0, x1);
@@ -565,7 +608,277 @@ void mgos_ili9341_sendPixels(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uin
     ili9341_send_pixels(x, y, x + w - 1, y + h - 1, data, size);
 }
 
+void mgos_buffer_write_pixel(uint16_t *buffer, uint16_t color, uint16_t x0, uint16_t y0) {
+  uint16_t w = mgos_ili9341_get_screenWidth();
+  uint32_t pos = ((y0 * w) + x0);
+  LOG(LL_INFO, ("mgos_buffer_write_pixel: pixel <%ld> written at x:<%d> - y:<%d> in buffer <%ld>!", (long) color, x0, y0, (long) pos));
+
+  if (buffer == NULL) {
+    buffer = mgos_buffer_get_global(); 
+  }
+  buffer[pos] = color;
+}
+
+uint16_t mgos_buffer_prepare_clip(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t *out_x, uint16_t *out_y) {
+  uint16_t winsize = (x1 - x0 + 1) * (y1 - y0 + 1);
+
+  *out_x = x1;
+  *out_y = y1;
+  
+  if (y0 + s_window.y0 > s_window.y1 || x0 + s_window.x0 > s_window.x1) {
+    return 0;
+  }
+  if (y1 + s_window.y0 > s_window.y1) {
+    *out_y = s_window.y1 - s_window.y0;
+  }
+  if (x1 + s_window.x0 > s_window.x1) {
+    *out_x = s_window.x1 - s_window.x0;
+  }
+
+  winsize = (*out_x - x0 + 1) * (*out_y - y0 + 1);
+  return winsize;
+}
+
+void mgos_buffer_send_pixels(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint8_t *buf, uint32_t buflen) {
+  uint16_t out_y, out_x, y, x;
+
+  uint16_t sc_w = mgos_ili9341_get_screenWidth();
+  uint16_t w = x1 - x0 + 1;
+  uint16_t winsize = mgos_buffer_prepare_clip(x0, y0, x1, y1, &out_x, &out_y);
+
+  if (winsize == 0) {
+    LOG(LL_ERROR, ("mgos_buffer_send_pixels: winsize is <0>!"));
+    return;
+  }
+
+  if (buffer == NULL) {
+    buffer = mgos_buffer_get_global(); 
+  }
+  
+  // LOG(LL_ERROR, ("mgos_buffer_send_pixels: x0:<%d> -  x1:<%d> -  y0:<%d> -  y1:<%d>", x0, x1, y0, y1));
+  uint16_t *src = (uint16_t *) buf;
+  for (y = y0; y <= out_y; y++) {
+    for (x = x0; x <= out_x; x++) {
+      uint32_t pos_win = (((y - y0) * w) + (x - x0));
+      uint32_t pos_buf = ((y * sc_w) + x);
+      buffer[pos_buf] = src[pos_win];
+      // uint32_t out_pos = ((y * w) + x) * sizeof(struct mgos_col_rgb);
+      //mgos_565_to_888_ex((struct mgos_col_rgb *) &(buffer[out_pos]), (uint16_t ) buf[pos]);
+    }
+    // LOG(LL_ERROR, ("mgos_buffer_send_pixels: pixels written!")); //" <%ld> written at x:<%d> - y:<%d> in buffer <%ld>!", (long) color, x0, y0, (long) pos));
+  }
+}
+
+void mgos_buffer_draw_to_screen() {
+  uint16_t *buffer = mgos_buffer_get_global(); 
+  uint32_t w = mgos_ili9341_get_screenWidth();
+  uint32_t h = mgos_ili9341_get_screenHeight();
+
+  bool oldUseBuffer = useBuffer;
+  useBuffer = false;
+  // mgos_ili9341_fillScreen();
+  ili9341_set_clip(0, 0, w - 1, h - 1);
+  ili9341_send_pixels(0, 0, w - 1, h - 1, (uint8_t *) buffer, screen_size);
+  useBuffer = oldUseBuffer;
+}
+
+uint16_t *mgos_buffer_get_global() {
+  if (screen_buffer == NULL) {
+    mgos_buffer_init(&screen_buffer);
+  }
+  return screen_buffer;
+}
+
+void mgos_buffer_fill_rect(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, uint16_t color) {
+  uint16_t out_y, out_x, x1, y1, y, x;
+  uint16_t sc_w = mgos_ili9341_get_screenWidth();
+  uint16_t sc_h = mgos_ili9341_get_screenHeight();
+  
+  x1 = x0 + w - 1;
+  y1 = y0 + h - 1;
+
+  uint16_t winsize = mgos_buffer_prepare_clip(x0, y0, x1, y1, &out_x, &out_y);
+
+  if (winsize == 0) {
+    LOG(LL_ERROR, ("mgos_buffer_send_pixels: winsize is <0>!"));
+    return;
+  }
+
+  if (buffer == NULL) {
+    buffer = mgos_buffer_get_global(); 
+  }
+  
+  if (x0 == 0 && y0 == 0 && w == sc_w && h == sc_h) {
+    size_t size = w * h * sizeof(uint16_t);
+    memset(buffer, 0x00, size);
+  }
+  
+  // LOG(LL_ERROR, ("mgos_buffer_fill_rect: x0:<%d> -  x1:<%d> -  y0:<%d> -  y1:<%d> - color:<%ld>", x0, out_x, y0, out_y, (long) color));
+
+  for (y = y0; y <= out_y; y++) {
+    for (x = x0; x <= out_x; x++) {
+      uint32_t pos_buf = ((y * sc_w) + x);
+      buffer[pos_buf] = color;
+    }
+  }
+}
+
+uint8_t *mgos_buffer_to_brg(uint16_t *buffer, uint16_t w, uint16_t h) {
+  uint32_t run = w * h;
+  uint32_t size_565 = run * sizeof(uint16_t);
+  uint32_t size_888 = run * sizeof(struct mgos_col_rgb);
+  uint8_t *buffer_888 = malloc(size_888);
+  
+  if(buffer_888 == NULL) {
+    return NULL;
+  }
+
+  memset(buffer_888, 0x00, size_888);
+
+  uint8_t *src = (uint8_t *) buffer;
+  uint8_t *dst = (uint8_t *) buffer_888;
+  for (int i = 0, j = 0; i < size_565; i += 2) {
+    uint16_t c = (src[i] << 8) + src[i + 1];
+    dst[j++] = (uint8_t) ((((c & 0xF800) >> 11) * 255) / 31);
+    dst[j++] = (uint8_t) ((((c & 0x07E0) >> 5)  * 255) / 63);
+    dst[j++] = (uint8_t) ((((c & 0x001F))       * 255) / 31);
+    /*    
+    dst[j++] = (uint8_t) (((c & 0xF800) >> 11) << 3);
+    dst[j++] = (uint8_t) (((c & 0x07E0) >>  5) << 2);
+    dst[j++] = (uint8_t) (((c & 0x001F)      ) << 3);
+    */
+  }
+
+  return buffer_888;
+}
+
+size_t mgos_write_buffer_to_png(uint16_t *buffer, const char *pngFileName) {
+  uint16_t w = mgos_ili9341_get_screenWidth();
+  uint16_t h = mgos_ili9341_get_screenHeight();
+  uint8_t *buffer_888;
+
+  if(buffer == NULL) {
+    buffer = mgos_buffer_get_global();
+  }
+  
+  buffer_888 = mgos_buffer_to_brg(buffer, w, h);
+  if(buffer_888 == NULL) {
+    LOG(LL_ERROR, ("mgos_buffer_to_rgb: error allocation RAM, not enough memory!"));
+    return 0;
+  }
+
+  // Now write the PNG image.
+  size_t png_data_size = 0;
+  void *pPNG_data = tdefl_write_image_to_png_file_in_memory(buffer_888, w, h, 3, &png_data_size);
+  free(buffer_888);
+
+  if (!pPNG_data) {
+    LOG(LL_ERROR, ("mgos_write_data_to_png: tdefl_write_image_to_png_file_in_memory() failed!"));
+  } else {
+    LOG(LL_DEBUG, ("mgos_write_data_to_png: PNG created, size:<%lu>!", (unsigned long) png_data_size));
+    FILE *pFile = fopen(pngFileName, "wb");
+    if(pFile == NULL) {
+      LOG(LL_ERROR, ("mgos_write_data_to_png: error opening file! <%s>", pngFileName));
+      png_data_size = 0;
+    } else {
+      if (fwrite(pPNG_data, 1, png_data_size, pFile) != png_data_size) {
+        LOG(LL_ERROR, ("mgos_write_data_to_png: error writing PNG file!"));
+        png_data_size = 0;
+      }
+      fclose(pFile);
+    }
+    mz_free(pPNG_data);
+  }
+  LOG(LL_DEBUG, ("mgos_write_data_to_png: <%d> bytes written as PNG!", png_data_size));
+  return png_data_size;  
+}
+
+bool mgos_write_dif_header(FILE *fdif, size_t w, size_t h) {
+  uint8_t outChar;
+  uint32_t out;
+  unsigned long dataLen = 0;
+
+  if (fwrite("DIF", 1, 3, fdif) != 3) {
+    return false;
+  }
+  outChar = 1;
+  fputc(outChar, fdif);
+  out = htonl(w);
+  if (fwrite((void *)&out, 1, 4, fdif) != 4) {
+    return false;
+  }
+  out = htonl(h);
+  if (fwrite((void *)&out, 1, 4, fdif) != 4) {
+    return false;
+  }
+  out = 0;
+  if (fwrite((void *)&out, 1, 4, fdif) != 4) {
+    return false;
+  }
+
+  dataLen = (unsigned long) (w * h * sizeof(uint16_t));
+  LOG(LL_INFO, ("mgos_write_dif_header DIF header written with W:<%d> - H:<%d>, Datasize:<%lu>", w, h, dataLen));
+
+  return true;
+}
+
+size_t mgos_write_buffer_to_dif(uint16_t *buffer, const char *file) {
+  size_t result = 0;
+  uint16_t w = mgos_ili9341_get_screenWidth();
+  uint16_t h = mgos_ili9341_get_screenHeight();
+  uint32_t size = w * h * sizeof(uint16_t);
+
+  FILE *out;
+
+  out = fopen(file, "wb");
+  if(out == NULL) {
+    LOG(LL_ERROR, ("mgos_write_buffer_to_dif: error opening file! <%s>", file));
+    return 0;
+  }
+  
+  if (!mgos_write_dif_header(out, w, h)) {
+    LOG(LL_ERROR, ("mgos_write_buffer_to_dif: error writing DIF header to file! <%s>", file));
+    return 0;
+  }
+  
+  if (buffer == NULL) {
+    buffer = mgos_buffer_get_global(); 
+  }
+
+  if (fwrite((void *) buffer, 1, size, out) != size) {
+    LOG(LL_ERROR, ("mgos_write_buffer_to_dif: error writing DIF data to file! <%s>", file));
+    fclose(out);
+    return 0;
+  }
+
+  fseek(out, 0, SEEK_END);
+  result = ftell(out);
+  fclose(out);
+
+  return result;
+}
+
+struct mgos_col_rgb mgos_565_to_888(uint16_t pix565) {
+  struct mgos_col_rgb result;
+
+  result.r = (uint8_t) ((((pix565 & 0xF800) > 11) * 255) / 31);
+  result.g = (uint8_t) ((((pix565 & 0x07E0) > 5)  * 255) / 63);
+  result.b = (uint8_t) ((((pix565 & 0x001F))      * 255) / 31);
+
+  return result;
+}
+
+void mgos_buffer_init(uint16_t **buffer) {
+  uint16_t w = mgos_ili9341_get_screenWidth();
+  uint16_t h = mgos_ili9341_get_screenHeight();
+  screen_size = w * h * sizeof(uint16_t);
+  *buffer = malloc(screen_size);
+  memset(*buffer, 0x00, screen_size);
+  LOG(LL_INFO, ("mgos_buffer_init: allocated <%ld> bytes for display buffer!", (long) screen_size));
+}
+
 bool mgos_ili9341_spi_init(void) {
+  
   // Setup DC pin
   mgos_gpio_write(mgos_sys_config_get_ili9341_dc_pin(), 0);
   mgos_gpio_set_mode(mgos_sys_config_get_ili9341_dc_pin(), MGOS_GPIO_MODE_OUTPUT);
