@@ -19,10 +19,14 @@
 
 #include "mgos.h"
 #include "mgos_ili9341_font.h"
+
+#ifdef MGOS_BUFFERED_DRAW
+
 #include "miniz.h"
 
 uint16_t *mgos_buffer_get_global();
 void mgos_buffer_init(uint16_t **screen_buf);
+void mgos_buffer_use_set(bool use);
 
 void mgos_buffer_write_pixel(uint16_t *buffer, uint16_t color, uint16_t x0, uint16_t y0);
 void mgos_buffer_send_pixels(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint8_t *buf, uint32_t buflen);
@@ -31,12 +35,13 @@ void mgos_buffer_fill_rect(uint16_t *buffer, uint16_t x0, uint16_t y0, uint16_t 
 bool mgos_write_dif_header(FILE *fdif, size_t w, size_t h);
 size_t mgos_write_buffer_to_dif(uint16_t *buffer, const char *file);
 size_t mgos_write_buffer_to_png(uint16_t *buffer, const char *pngFileName);
-uint8_t *mgos_buffer_to_brg(uint16_t *buffer, uint16_t w, uint16_t h);
+uint8_t *mgos_buffer_to_rgb(uint16_t *buffer, uint16_t w, uint16_t h);
 
 void mgos_buffer_draw_to_screen();
 
 uint16_t mgos_buffer_prepare_clip(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t *out_x, uint16_t *out_y);
 struct mgos_col_rgb mgos_565_to_888(uint16_t pix565);
+#endif // MGOS_BUFFERED_DRAW
 
   
 // Color definitions for RGB in 565-format
