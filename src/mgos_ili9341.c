@@ -26,6 +26,8 @@
 #include "mgos_ili9341_hal.h"
 #include "mgos_ili9341_font.h"
 
+#include "mgos_common_tools.h"
+
 static uint16_t s_screen_width;
 static uint16_t s_screen_height;
 static struct ili9341_window s_window;
@@ -212,6 +214,7 @@ static void ili9341_fillRect(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h) {
   buflen = (todo_len < ILI9341_FILLRECT_CHUNK ? todo_len : ILI9341_FILLRECT_CHUNK);
 
   if (!(buf = malloc(buflen * sizeof(uint16_t)))) {
+  //if (!(buf = heap_caps_malloc(buflen * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT))) {
     return;
   }
 
@@ -578,11 +581,13 @@ void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn) {
 
   fd = open(fn, O_RDONLY);
   if (!fd) {
-    LOG(LL_ERROR, ("%s: Could not opens", fn));
+    LOG(LL_ERROR, ("%s: Could not open", fn));
     goto exit;
   }
-  if (16 != read(fd, dif_hdr, 16)) {
-    LOG(LL_ERROR, ("%s: Could not read DIF header", fn));
+  
+  int count = read(fd, dif_hdr, 16);
+  if (count != 16) {
+    LOG(LL_ERROR, ("%s: Could not read DIF header, result: %d", fn, count));
     goto exit;
   }
   if (dif_hdr[0] != 'D' || dif_hdr[1] != 'I' || dif_hdr[2] != 'F' || dif_hdr[3] != 1) {
@@ -758,6 +763,7 @@ uint8_t *mgos_buffer_to_rgb(uint16_t *buffer, uint16_t w, uint16_t h) {
   uint32_t size_565 = run * sizeof(uint16_t);
   uint32_t size_888 = run * sizeof(struct mgos_col_rgb);
   uint8_t *buffer_888 = malloc(size_888);
+  //uint8_t *buffer_888 = heap_caps_malloc(size_888, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   
   if(buffer_888 == NULL) {
     return NULL;
@@ -912,6 +918,8 @@ void mgos_buffer_init(uint16_t **buffer) {
   uint16_t h = mgos_ili9341_get_screenHeight();
   screen_size = w * h * sizeof(uint16_t);
   *buffer = malloc(screen_size);
+  //*buffer = heap_caps_malloc(screen_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
   memset(*buffer, 0x00, screen_size);
   LOG(LL_INFO, ("mgos_buffer_init: allocated <%ld> bytes for display buffer!", (long) screen_size));
 }

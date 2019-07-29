@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-#ifndef __MGOS_ILI9341_H
-#define __MGOS_ILI9341_H
+#pragma once
 
 #include "mgos.h"
 #include "mgos_ili9341_font.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifdef MGOS_BUFFERED_DRAW
 
@@ -43,7 +46,6 @@ uint16_t mgos_buffer_prepare_clip(uint16_t x0, uint16_t y0, uint16_t x1, uint16_
 struct mgos_col_rgb mgos_565_to_888(uint16_t pix565);
 #endif // MGOS_BUFFERED_DRAW
 
-  
 // Color definitions for RGB in 565-format
 #define ILI9341_BLACK          0x0000   /*   0,   0,   0 */
 #define ILI9341_NAVY           0x000F   /*   0,   0, 128 */
@@ -80,12 +82,6 @@ enum mgos_ili9341_rotation_t {
   ILI9341_LANDSCAPE      = 1,
   ILI9341_PORTRAIT_FLIP  = 2,
   ILI9341_LANDSCAPE_FLIP = 3,
-};
-
-struct mgos_col_rgb {
-  uint8_t r;  
-  uint8_t g;  
-  uint8_t b;  
 };
 
 // Externally callable functions:
@@ -135,12 +131,10 @@ uint16_t mgos_ili9341_line(int n);
 
 // Images
 void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn);
+
+// from fms1961@gmail.com
 void mgos_ili9341_sendPixels(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *data, uint16_t size);
-void mgos_ili9341_set_clip_only(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 
-void mgos_ili9341_spi_write(const uint8_t *data, uint32_t size);
-void mgos_ili9341_spi_write8_cmd(uint8_t byte);
-void mgos_ili9341_spi_write8(const uint8_t byte);
-void mgos_ili9341_spi_write8(uint8_t byte);
-
-#endif // __MGOS_ILI9341_H
+#ifdef __cplusplus
+}
+#endif
