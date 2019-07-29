@@ -22,6 +22,7 @@
 
 #include "mgos_config.h"
 #include "mgos_gpio.h"
+#include <stdio.h>
 
 #include "mgos_ili9341_hal.h"
 #include "mgos_ili9341_font.h"
@@ -577,14 +578,18 @@ void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn) {
   uint16_t *pixelline = NULL;
   uint8_t   dif_hdr[16];
   uint32_t  w, h;
-  int       fd;
+  //FILE *fd;
+  int fd = 0;
 
+  //fd = fopen(fn, "r");
+  //if (!fd) {
   fd = open(fn, O_RDONLY);
-  if (!fd) {
+  if (fd <= 0) {
     LOG(LL_ERROR, ("%s: Could not open", fn));
     goto exit;
   }
   
+  //int count = fread(dif_hdr, 1, 16, fd);
   int count = read(fd, dif_hdr, 16);
   if (count != 16) {
     LOG(LL_ERROR, ("%s: Could not read DIF header, result: %d", fn, count));
@@ -600,6 +605,7 @@ void mgos_ili9341_drawDIF(uint16_t x0, uint16_t y0, char *fn) {
   pixelline = calloc(w, sizeof(uint16_t));
 
   for (uint16_t yy = 0; yy < h; yy++) {
+//    if (w * 2 != (uint16_t)fread(pixelline, 1, w * 2, fd)) {
     if (w * 2 != (uint16_t)read(fd, pixelline, w * 2)) {
       LOG(LL_ERROR, ("%s: short read", fn));
       goto exit;
@@ -614,6 +620,7 @@ exit:
   if (pixelline) {
     free(pixelline);
   }
+  //fclose(fd);
   close(fd);
 }
 
