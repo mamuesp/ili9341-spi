@@ -23,6 +23,12 @@
 extern "C" {
 #endif
 
+struct mgos_col_rgb {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
 #ifdef MGOS_BUFFERED_DRAW
 
 #include "miniz.h"
